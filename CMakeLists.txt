@@ -11,83 +11,106 @@
 #
 ###################################################################################
 
-cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 
-project(bcrypt)
+include(cmake/HunterGate.cmake)
+set(
+    HUNTER_CACHE_SERVERS
+    "https://github.com/CHChang810716/hunter-binary-cache"
+    CACHE
+    STRING
+    "Hunter cache servers"
+)
+HunterGate(
+    URL "https://github.com/CHChang810716/hunter.git"
+    SHA1 001f05eefbd1b3f0edb3c73d9c50f3f20190a1fb
+)
 
-enable_language(ASM)
-
-set(MYLIB_VERSION_MAJOR 1)
-set(MYLIB_VERSION_MINOR 0)
-set(MYLIB_VERSION_PATCH 0)
-set(MYLIB_VERSION_STRING ${MYLIB_VERSION_MAJOR}.${MYLIB_VERSION_MINOR}.${MYLIB_VERSION_PATCH})
-
-# just doing cmake . will build a shared or static lib and honor existing environment setting
-# to force build static, cmake . -DBUILD_SHARED_LIBS=Off
-# to force build shared, cmake . -DBUILD_SHARED_LIBS=On
+project(bcrypt 
+  LANGUAGES C CXX ASM
+  VERSION 0.1.0.0
+)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
+  message(STATUS "Processor support x86")
+else()
+  message(FATAL "Package uses x86 ASM, processor must support x86")
+endif()
+option(ENABLE_TEST "enable build test case" OFF)
+option(BUILD_SHARED_LIBS "build shared library instead of static archive" OFF)
 
 if (NOT BUILD_SHARED_LIBS)
-	message ("Building a static library")
+  message (STATUS "Building a static library")
 else ()
-	message ("Building a shared library")
+  message (STATUS "Building a shared library")
 endif ()
 
-
-set( CMAKE_COLOR_MAKEFILE ON )
-
-set( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall --std=c++11 -O3" )
-set( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -O3" )
-
-set( CMAKE_ASM_FLAGS "${CXXFLAGS} -x assembler-with-cpp")
-
-set( SRCFILES
-	${CMAKE_CURRENT_SOURCE_DIR}/src/bcrypt.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/crypt_blowfish.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/crypt_gensalt.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/wrapper.c
-	${CMAKE_CURRENT_SOURCE_DIR}/src/x86.S
-)
-
-if (NOT WIN32)
-	include_directories( ${CMAKE_CURRENT_SOURCE_DIR}/include/bcrypt)
+if(GNU)
+  set( CMAKE_ASM_FLAGS "${CXXFLAGS} -x assembler-with-cpp")
 endif()
 
-include_directories( ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-add_library(
-	${PROJECT_NAME}
-	${SRCFILES}
+set( SRCFILES
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bcrypt.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/crypt_blowfish.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/crypt_gensalt.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/wrapper.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/x86.S
 )
 
-set_target_properties(${PROJECT_NAME} PROPERTIES VERSION ${MYLIB_VERSION_STRING} SOVERSION ${MYLIB_VERSION_MAJOR})
+add_library(
+  ${PROJECT_NAME}
+  ${SRCFILES}
+)
+target_include_directories(${PROJECT_NAME} PUBLIC 
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_11)
+if (NOT WIN32)
+  target_include_directories(${PROJECT_NAME} PRIVATE 
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/bcrypt>
+  )
+endif()
+list(APPEND inst_targets ${PROJECT_NAME})
 
-set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER include/bcrypt/BCrypt.hpp)
-
-target_include_directories(${PROJECT_NAME} PRIVATE include)
-target_include_directories(${PROJECT_NAME} PRIVATE src)
-
-add_executable( ${PROJECT_NAME}_test ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
-
-target_link_libraries( ${PROJECT_NAME}_test ${PROJECT_NAME})
+if(ENABLE_TEST)
+  add_executable( ${PROJECT_NAME}_test ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+  target_link_libraries( ${PROJECT_NAME}_test ${PROJECT_NAME})
+endif()
 
 include(GNUInstallDirs)
-
-install(TARGETS ${PROJECT_NAME}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bcrypt)
+include(CMakePackageConfigHelpers)
+set(AKT_GEN_DIR             "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(AKT_CONFIG_INSTALL_DIR  "lib/cmake/${PROJECT_NAME}")
+set(AKT_CONFIG_VERSION      "${AKT_GEN_DIR}/${PROJECT_NAME}ConfigVersion.cmake")
+set(AKT_PROJECT_CONFIG      "${AKT_GEN_DIR}/${PROJECT_NAME}Config.cmake")
+set(AKT_TARGETS_EXPORT      "${PROJECT_NAME}Targets")
+set(AKT_NAMESPACE           "${PROJECT_NAME}::")
+configure_package_config_file(
+    cmake/Config.cmake.in
+    ${AKT_PROJECT_CONFIG}
+    INSTALL_DESTINATION ${AKT_CONFIG_INSTALL_DIR}
+)
+write_basic_package_version_file(
+    ${AKT_CONFIG_VERSION} COMPATIBILITY SameMajorVersion
+)
+install(
+    FILES ${AKT_PROJECT_CONFIG}
+    DESTINATION ${AKT_CONFIG_INSTALL_DIR}
+)
+install(
+    TARGETS ${inst_targets}
+    EXPORT ${AKT_TARGETS_EXPORT}
+    BUNDLE DESTINATION . COMPONENT Runtime
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Library
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Develop
+)
+install(
+    EXPORT ${AKT_TARGETS_EXPORT}
+    NAMESPACE ${AKT_NAMESPACE}
+    DESTINATION ${AKT_CONFIG_INSTALL_DIR}
+)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-	FILES_MATCHING PATTERN "*.h")
-
-SET(CPACK_GENERATOR "DEB")
-SET(CPACK_SET_DESTDIR ON)
-
-SET(CPACK_DEBIAN_PACKAGE_MAINTAINER "Manuel Romei")
-SET(CPACK_PACKAGE_VERSION "1.0.0")
-SET(CPACK_PACKAGE_VERSION_MAJOR "1")
-SET(CPACK_PACKAGE_VERSION_MINOR "0")
-SET(CPACK_PACKAGE_VERSION_PATCH "0")
-
-INCLUDE(CPack)
+  FILES_MATCHING PATTERN "*.h")
